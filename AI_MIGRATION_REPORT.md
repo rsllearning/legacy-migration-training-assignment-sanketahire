@@ -67,4 +67,73 @@ Applying the training material's verification technique, we audited the AI's cla
 
 ---
 
-*Note: Phase 2 (Golden Master Baselines), Phase 3 (AI Code Generation), Phase 4 (Red-Teaming & Refinements), and the Zero-Downtime Rollback Strategy will be documented in the subsequent sections as each milestone is completed.*
+## Phase 2: Establish the Safety Net (Golden Master Baseline)
+
+Before generating any modernized V2 code, we established an empirical safety net by locking down the exact input/output behavior of the V1 API across 4 critical production scenarios.
+
+### 2.1 Baseline Data Capture Execution
+With the Spring Boot application running on port 8080 (`http://localhost:8080`), we executed the following 4 `curl` commands to generate the official Golden Master JSON files:
+
+```bash
+# Request 1: Fetch Alice's Profile (Public User, Self-Request)
+curl -s -X GET "http://localhost:8080/api/v1/profile?user_id=1&requester_id=1" -o golden_profile_1.json
+
+# Request 2: Fetch Bob's Private Profile (Private User, Unauthorized Requester Charlie)
+curl -s -X GET "http://localhost:8080/api/v1/profile?user_id=2&requester_id=3" -o golden_profile_2.json
+
+# Request 3: Update Settings (Valid Parameter)
+curl -s -X POST "http://localhost:8080/api/v1/settings?user_id=1" -d "mute_notifications=true" -o golden_settings.json
+
+# Request 4: Fetch Alice's Feed (Soft-deleted Post 103 filtered, Order Descending, Limit 2)
+curl -s -X GET "http://localhost:8080/api/v1/feed?user_id=1" -o golden_feed.json
+```
+
+---
+
+### 2.2 Golden Master Saved Payloads & Status Codes
+
+Below is the verified record of the baseline responses:
+
+#### Request 1: `golden_profile_1.json`
+* **Endpoint:** `GET /api/v1/profile?user_id=1&requester_id=1`
+* **HTTP Status Code:** `200 OK`
+* **Captured Payload:**
+```json
+{"badges":[],"id":1,"follower_count":500,"username":"alice"}
+```
+* **Contractual Nuance:** The response contains `"badges": []`, `"id": 1`, `"follower_count": 500`, and `"username": "alice"`.
+
+#### Request 2: `golden_profile_2.json`
+* **Endpoint:** `GET /api/v1/profile?user_id=2&requester_id=3`
+* **HTTP Status Code:** `403 Forbidden`
+* **Captured Payload:**
+```json
+{"error":"Profile is private"}
+```
+* **Contractual Nuance:** Unauthorized access to a private profile must strictly yield HTTP 403 with the exact error message key `"error"`.
+
+#### Request 3: `golden_settings.json`
+* **Endpoint:** `POST /api/v1/settings?user_id=1` (`mute_notifications=true`)
+* **HTTP Status Code:** `200 OK`
+* **Captured Payload:**
+```json
+{"status":"success"}
+```
+* **Contractual Nuance:** Valid setting mutation returns a single key-value JSON object. (Note: invalid inputs return `400 Bad Request` with an empty body).
+
+#### Request 4: `golden_feed.json`
+* **Endpoint:** `GET /api/v1/feed?user_id=1`
+* **HTTP Status Code:** `200 OK`
+* **Captured Payload:**
+```json
+[{"created_at":1700000030,"content":"Wow, learning to code is fun","id":104},{"created_at":1700000010,"content":"Having a great day","id":102}]
+```
+* **Contractual Nuance:** Alice has 4 total posts in the database:
+  - Post 104 (`created_at: 1700000030`, active) $\rightarrow$ **Included (1st)**
+  - Post 103 (`created_at: 1700000020`, `is_deleted = true`) $\rightarrow$ **Filtered out**
+  - Post 102 (`created_at: 1700000010`, active) $\rightarrow$ **Included (2nd)**
+  - Post 101 (`created_at: 1700000000`, active) $\rightarrow$ **Excluded by `LIMIT 2`**
+
+---
+
+*Note: Phase 3 (AI Code Generation), Phase 4 (Red-Teaming & Refinements), and the Zero-Downtime Rollback Strategy will be documented in the subsequent sections as each milestone is completed.*
