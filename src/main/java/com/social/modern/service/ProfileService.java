@@ -2,9 +2,12 @@ package com.social.modern.service;
 
 import com.social.modern.domain.User;
 import com.social.modern.dto.ProfileResponseDto;
+import com.social.modern.exception.PrivateProfileException;
 import com.social.modern.exception.UserNotFoundException;
 import com.social.modern.repository.UserRepository;
 import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
 
 @Service
 public class ProfileService {
@@ -19,8 +22,10 @@ public class ProfileService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException("Not found"));
 
-        // Initial AI generation: blindly returns DTO mapped from DB entity,
-        // missing privacy check (exposing private profile) and missing synthetic badges
-        return new ProfileResponseDto(user.getId(), user.getUsername(), user.getFollowerCount());
+        if (Boolean.TRUE.equals(user.getIsPrivate()) && !userId.toString().equals(requesterId)) {
+            throw new PrivateProfileException("Profile is private");
+        }
+
+        return new ProfileResponseDto(user.getId(), user.getUsername(), user.getFollowerCount(), new ArrayList<>());
     }
 }

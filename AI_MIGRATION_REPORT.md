@@ -1,9 +1,19 @@
 # AI-Assisted Legacy Migration Report: Social Media API V1 to V2
 
-**Author / Lead Engineer:** Sanket Ahire  
+**Author:** Sanket Ahire  
 **Service:** Social Media API (`payroll-service` / `com.social`)  
 **Target Architecture:** Modern Spring Boot 3.2.x, Spring Data JDBC, N-Tier Architecture, Global ControllerAdvice  
-**Date:** September 30, 2026  
+**GitHub Repository:** https://github.com/rsllearning/legacy-migration-training-assignment-sanketahire  
+**Commit History (Step-by-Step Phase Trail):** https://github.com/rsllearning/legacy-migration-training-assignment-sanketahire/commits/main/  
+
+> **Note for Reviewers:** Please inspect the [commit history](https://github.com/rsllearning/legacy-migration-training-assignment-sanketahire/commits/main/) to review the chronological step-by-step progression through each phase of the migration and red-teaming process.
+
+---
+
+### Quick Start & Verification Commands
+* **Compile Codebase:** `./gradlew compileJava`
+* **Run Application (Port 8080):** `./gradlew bootRun`
+* **Run All Integration & Unit Tests:** `./gradlew test`
 
 ---
 
@@ -192,4 +202,228 @@ src/main/java/com/social/modern/
 
 ---
 
-*Note: Phase 4 (Red-Teaming & Refinements) and the Zero-Downtime Rollback Strategy will be documented in the subsequent sections.*
+## Phase 4: Red-Teaming & Prompt Refinement (Auditing AI Output)
+
+As emphasized in the training material, AI output reads confidently and compiles cleanly, but inevitably introduces deep semantic errors and security vulnerabilities. Following the assignment's core rule (*do not manually edit Java code to fix AI bugs*), we audited the `/api/v2` endpoints against the Golden Master baseline, cataloged the regressions, and prompted the AI to fix each issue.
+
+---
+
+### 4.1 Verification Tests & Failure Exposure
+
+We executed `curl` against all 4 modernized endpoints on `/api/v2` and diffed them directly against `golden_*.json`:
+
+```bash
+# Verification 1: Alice's Profile (V2)
+curl -i -s "http://localhost:8080/api/v2/profile?user_id=1&requester_id=1"
+
+# Verification 2: Bob's Private Profile as Charlie (V2)
+curl -i -s "http://localhost:8080/api/v2/profile?user_id=2&requester_id=3"
+
+# Verification 3: Update Settings (V2)
+curl -i -s -X POST "http://localhost:8080/api/v2/settings?user_id=1" -d "mute_notifications=true"
+
+# Verification 4: Alice's Feed (V2)
+curl -i -s "http://localhost:8080/api/v2/feed?user_id=1"
+```
+
+#### Side-by-Side Diff Analysis (Golden Master Baseline vs. Initial AI V2 Output):
+
+| Test Case | Golden Master Baseline (V1) | Initial AI V2 Output | Discrepancy & Severity |
+| :--- | :--- | :--- | :--- |
+| **1. Alice Profile** | `HTTP 200 OK`<br>`{"badges":[],"id":1,"follower_count":500,"username":"alice"}` | `HTTP 200 OK`<br>`{"id":1,"username":"alice","follower_count":500}` | ❌ **Contract Regression:** Dropped the `"badges": []` field because it does not exist in the SQL database table. |
+| **2. Bob Private Profile (by Charlie)** | `HTTP 403 Forbidden`<br>`{"error":"Profile is private"}` | `HTTP 200 OK`<br>`{"id":2,"username":"bob_private","follower_count":10}` | ❌ **CRITICAL SECURITY FLAW:** Complete privacy check bypass. The AI returned private profile data with HTTP 200 to an unauthorized user! |
+| **3. Update Settings** | `HTTP 200 OK`<br>`{"status":"success"}` | `HTTP 200 OK`<br>`{"status":"success"}` | ✅ **Match:** 100% Contract parity. |
+| **4. Alice Feed** | `HTTP 200 OK` (2 posts)<br>`[{"id":104,"content":"...","created_at":1700000030},{"id":102,"content":"...","created_at":1700000010}]` | `HTTP 200 OK` (4 posts)<br>`[{"id":101,...},{"id":102,...},{"id":103,...},{"id":104,...}]` | ❌ **Data Leak & Query Regression:** Leaked soft-deleted post 103 (`is_deleted=true`), returned posts in ascending insertion order, and ignored the hardcoded `LIMIT 2` constraint. |
+
+---
+
+### 4.2 The AI Hallucinations & Regressions Catalog
+
+We isolated **4 major failure modes** in the initial AI-generated migration:
+
+#### 1. Critical Security Vulnerability (Dropped Privacy Gate)
+* **What Happened:** The AI generated a standard CRUD method `userRepository.findById(userId)` in `ProfileService`. Because no explicit `@PreAuthorize` or custom authorization check was provided in the generic generation prompt, the AI assumed fetching the user was sufficient.
+* **Impact:** Any user could view private user profiles simply by supplying a `requester_id`, completely violating data privacy.
+* **Root Cause:** AI optimizes for happy-path data retrieval and drops implicit business rules when translating procedural code into service beans.
+
+#### 2. API Contract Regression (Missing Synthetic `"badges": []` Field)
+* **What Happened:** In V1 `LegacyProfileDao`, `"badges": new ArrayList<>()` was injected manually into the response map. Because the `users` table schema in `schema.sql` has no `badges` column, the AI modeled `User.java` and `ProfileResponseDto.java` solely after the relational columns (`id`, `username`, `follower_count`, `is_private`), dropping `"badges"`.
+* **Impact:** Mobile and frontend clients relying on the `badges` array crash due to null/missing field exceptions.
+* **Root Cause:** AI assumes DTO fields must strictly 1:1 mirror relational database columns.
+
+#### 3. Data Leakage & Feed Query Regression (Omitted Filters, Sorting & Limits)
+* **What Happened:** The AI wrote `findByUserId(Integer userId)` on `PostRepository`. This generated a naive `SELECT * FROM posts WHERE user_id = ?` query.
+* **Impact:**
+  1. *Soft-Delete Leak:* Post 103 (`is_deleted = true`, content: `"This is a secret I will delete"`) was served in the live API feed.
+  2. *Sorting Inversion:* Posts were returned in database insertion order (oldest first) rather than chronological order (`ORDER BY created_at DESC`).
+  3. *Unbounded Payload:* Returned all 4 posts instead of the legacy `LIMIT 2` constraint.
+* **Root Cause:** AI relies on generic Spring Data derived method names without reading SQL query nuances.
+
+#### 4. SQL Identifier Quoting / Dialect Collision
+* **What Happened:** Spring Data JDBC by default quotes table names in generated SQL (`FROM "users"`). In H2 in-memory databases, schema tables are defined in uppercase (`USERS`). This resulted in an initial `BadSqlGrammarException (Table "users" not found)`.
+* **Resolution:** Configured uppercase entity table mappings `@Table("USERS")` and `@Table("POSTS")` and explicit column mappings.
+
+---
+
+### 4.3 The Correction Prompts
+
+Per the assignment guidelines, all bugs were remediated purely via AI correction prompts:
+
+#### Correction Prompt 1: Profile Security Gate & Synthetic Field Restoration
+```text
+The V2 profile endpoint (/api/v2/profile) failed Golden Master verification on two critical requirements:
+
+1. SECURITY REGRESSION: When user_id=2 (a private account) is requested by requester_id=3, the endpoint returned HTTP 200 with the user's data instead of HTTP 403 Forbidden with {"error": "Profile is private"}. Update ProfileService to check if user.getIsPrivate() is true and !userId.toString().equals(requesterId). If unauthorized, throw PrivateProfileException("Profile is private"). Ensure GlobalExceptionHandler returns HTTP 403 Forbidden with {"error": "Profile is private"}.
+
+2. API CONTRACT INTEGRITY: The legacy baseline (golden_profile_1.json) requires a "badges" field with an empty array: {"badges":[], "id": 1, ...}. The AI-generated ProfileResponseDto omitted this field. Update ProfileResponseDto to include `private List<String> badges = new ArrayList<>();` (with getter/setter) so the JSON payload preserves this legacy key.
+
+Please regenerate the corrected ProfileResponseDto.java, ProfileService.java, and verify GlobalExceptionHandler.java.
+```
+
+#### Correction Prompt 2: Feed Query Constraints (Soft-Delete, Sorting, Limit)
+```text
+The V2 feed endpoint (/api/v2/feed) failed Golden Master verification against golden_feed.json:
+
+1. SOFT-DELETE LEAK: The repository returned post 103, which has is_deleted=true.
+2. SORTING REGRESSION: Posts were returned in ascending insertion order instead of newest first.
+3. PAGINATION CONTRACT BREACH: The endpoint returned 4 posts instead of the legacy hardcoded limit of 2 posts.
+
+Update PostRepository.java using Spring Data JDBC @Query to enforce the exact legacy query:
+SELECT id, user_id, content, created_at, is_deleted 
+FROM posts 
+WHERE user_id = :userId AND is_deleted = false 
+ORDER BY created_at DESC 
+LIMIT 2;
+
+And update FeedService.java to use this repository method.
+```
+
+---
+
+### 4.4 Post-Correction Verification & Final Parity Proof
+
+After applying the AI's regenerated classes, we re-executed all verification curls and automated tests:
+
+#### 1. Live Terminal Curl Results:
+* **`GET /api/v2/profile?user_id=1&requester_id=1`**
+  ```http
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+  {"id":1,"username":"alice","badges":[],"follower_count":500}
+  ```
+  *(100% Match with `golden_profile_1.json`)*
+
+* **`GET /api/v2/profile?user_id=2&requester_id=3`**
+  ```http
+  HTTP/1.1 403 Forbidden
+  Content-Type: application/json
+  {"error":"Profile is private"}
+  ```
+  *(100% Match with `golden_profile_2.json`)*
+
+* **`POST /api/v2/settings?user_id=1` (`mute_notifications=true`)**
+  ```http
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+  {"status":"success"}
+  ```
+  *(100% Match with `golden_settings.json`)*
+
+* **`GET /api/v2/feed?user_id=1`**
+  ```http
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+  [{"id":104,"content":"Wow, learning to code is fun","created_at":1700000030},{"id":102,"content":"Having a great day","created_at":1700000010}]
+  ```
+  *(100% Match with `golden_feed.json`)*
+
+* **Edge Case Verification:**
+  - `GET /api/v2/profile?user_id=999&requester_id=1` $\rightarrow$ `HTTP 404 Not Found` with `{"error": "Not found"}`.
+  - `POST /api/v2/settings?user_id=1` (`mute_notifications=invalid`) $\rightarrow$ `HTTP 400 Bad Request` with empty body (`Content-Length: 0`).
+
+#### 2. Automated Test Suite Execution:
+* **Command:** `./gradlew test`
+* **Test Classes:** `LegacyApiIntegrationTest` + `ModernApiIntegrationTest`
+* **Result:** `BUILD SUCCESSFUL` (All 8 automated integration tests passed).
+
+---
+
+## Phase 5: Production Zero-Downtime Rollback Strategy
+
+A fundamental tenet of the training material is that **a migration engineer must provide a safe, instant rollback plan that does not rely on emergency code redeployments or server downtime.**
+
+Because the legacy V1 (`/api/v1/*`) and modern V2 (`/api/v2/*`) codebases run **side-by-side on the exact same Spring Boot server instance**, we can achieve zero-downtime traffic management and instantaneous rollback using a **Dual-Layer Routing & Feature-Flag Architecture**.
+
+```mermaid
+flowchart TD
+    Client["Client Traffic<br>(Web / Mobile)"] --> Gateway["API Gateway / Reverse Proxy<br>(Envoy / NGINX / Cloud Gateway)"]
+    
+    subgraph "Traffic Routing Layer"
+        Gateway -->|"Default Path (/api/v1)"| V1_Route["V1 Route Target"]
+        Gateway -->|"Canary Split (% / Segment)"| V2_Route["V2 Route Target"]
+    end
+    
+    subgraph "Spring Boot Server (Single JVM)"
+        V1_Route --> V1_Controller["V1 Controller<br>(/api/v1)"]
+        V2_Route --> V2_Controller["V2 Controller<br>(/api/v2)"]
+        
+        V1_Controller --> V1_DAO["Raw JdbcTemplate DAO"]
+        V2_Controller --> V2_Service["Spring Data JDBC Service"]
+        
+        V1_DAO --> SharedDB[("Shared Database<br>(H2 / PostgreSQL)")]
+        V2_Service --> SharedDB
+    end
+    
+    subgraph "Instant Rollback Control Plane"
+        Admin["Deployment Engineer"] -.->|"Dynamic Config Flip<br>(Zero Redeploy)"| Gateway
+    end
+```
+
+---
+
+### 5.1 The 4-Stage Rollout Plan
+
+1. **Stage 1: Shadow Comparison (Correctness Verification):**
+   * An API Gateway shadow-traffic filter duplicates 10% of production `/api/v1` requests asynchronously to `/api/v2`.
+   * The response of `/api/v1` is returned to the user; the response of `/api/v2` is logged and diffed asynchronously.
+   * Zero risk to end-users while validating correctness under real traffic.
+
+2. **Stage 2: Canary / Strangler Fig Percentage Ramp:**
+   * Configure the API Gateway to rewrite inbound `/api/v1` traffic to `/api/v2` incrementally:
+     `1% -> 5% -> 25% -> 50% -> 100%`.
+   * Scope can be targeted by user ID hash, customer tier, or geographical region.
+
+3. **Stage 3: Full Production Cutover (100%):**
+   * Inbound traffic routes 100% to V2.
+   * The V1 code remains dormant inside the JVM as an instant fallback target.
+
+4. **Stage 4: Post-Bake Deprecation & Cleanup:**
+   * After 30 days of 100% error-free operation in production, a scheduled maintenance ticket removes the `com.social.legacy` package and clears the gateway rewrite rules.
+
+---
+
+### 5.2 The Instant Zero-Downtime Rollback Execution Plan
+
+If an unhandled exception, performance regression, or memory leak is detected in V2 during rollout:
+
+#### Step 1: Instant Gateway Path Reversion (Execution Time: < 5 seconds)
+* Update the routing rule in the API Gateway / Load Balancer to route 100% of client traffic back to `/api/v1/*`.
+* In NGINX / Envoy / Cloud Gateway, this is a live configuration reload (`nginx -s reload` or dynamic control-plane update via Envoy xDS) requiring **zero process restart and zero container redeployment**.
+
+#### Step 2: Zero Database Conflict Guarantee
+* Both V1 and V2 operate on the identical underlying schema (`users` and `posts` tables).
+* Because V2 does not alter column definitions or write incompatible data formats, rolling back from V2 to V1 causes **zero data corruption or schema incompatibilities**.
+
+#### Step 3: Post-Incident Isolation
+* Traffic is safely serviced by V1 while engineering inspects the V2 metrics, APM traces, and exception logs in isolation.
+
+---
+
+## Conclusion & Grading Summary
+
+This project demonstrated the complete engineering discipline required for AI-assisted migrations:
+1. **Never trust AI code blindly:** AI dropped security gates, soft-delete filters, pagination limits, and synthetic contract keys while generating code that compiled cleanly.
+2. **Golden Master is the ground truth:** Capturing baseline payloads enabled instant, objective detection of AI regressions.
+3. **Red-team with structured correction prompts:** Re-prompting the AI with exact failure rationales allowed clean remediation without breaking architecture.
+4. **Resilient zero-downtime architecture:** Running V1 and V2 side-by-side provides instant rollback capability without taking production offline.
+

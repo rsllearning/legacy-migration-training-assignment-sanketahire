@@ -4,17 +4,17 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
-@Table("users")
+@Table("USERS")
 public class User {
 
     @Id
     private Integer id;
     private String username;
     
-    @Column("follower_count")
+    @Column("FOLLOWER_COUNT")
     private Integer followerCount;
     
-    @Column("is_private")
+    @Column("IS_PRIVATE")
     private Boolean isPrivate;
 
     public User() {

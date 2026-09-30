@@ -18,9 +18,7 @@ public class FeedService {
     }
 
     public List<FeedPostDto> getFeed(Integer userId) {
-        // Initial AI generation: uses standard findByUserId without soft-delete filter,
-        // timestamp ordering, or limit 2
-        List<Post> posts = postRepository.findByUserId(userId);
+        List<Post> posts = postRepository.findFeedPostsByUserId(userId);
         return posts.stream()
                 .map(post -> new FeedPostDto(post.getId(), post.getContent(), post.getCreatedAt()))
                 .collect(Collectors.toList());

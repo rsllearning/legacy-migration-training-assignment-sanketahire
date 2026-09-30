@@ -1,6 +1,8 @@
 package com.social.modern.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ProfileResponseDto {
 
@@ -10,6 +12,8 @@ public class ProfileResponseDto {
     @JsonProperty("follower_count")
     private Integer followerCount;
 
+    private List<String> badges = new ArrayList<>();
+
     public ProfileResponseDto() {
     }
 
@@ -17,6 +21,14 @@ public class ProfileResponseDto {
         this.id = id;
         this.username = username;
         this.followerCount = followerCount;
+        this.badges = new ArrayList<>();
+    }
+
+    public ProfileResponseDto(Integer id, String username, Integer followerCount, List<String> badges) {
+        this.id = id;
+        this.username = username;
+        this.followerCount = followerCount;
+        this.badges = badges != null ? badges : new ArrayList<>();
     }
 
     public Integer getId() {
@@ -41,5 +53,13 @@ public class ProfileResponseDto {
 
     public void setFollowerCount(Integer followerCount) {
         this.followerCount = followerCount;
+    }
+
+    public List<String> getBadges() {
+        return badges;
+    }
+
+    public void setBadges(List<String> badges) {
+        this.badges = badges;
     }
 }

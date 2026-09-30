@@ -4,21 +4,21 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
-@Table("posts")
+@Table("POSTS")
 public class Post {
 
     @Id
     private Integer id;
     
-    @Column("user_id")
+    @Column("USER_ID")
     private Integer userId;
     
     private String content;
     
-    @Column("created_at")
+    @Column("CREATED_AT")
     private Long createdAt;
     
-    @Column("is_deleted")
+    @Column("IS_DELETED")
     private Boolean isDeleted;
 
     public Post() {
