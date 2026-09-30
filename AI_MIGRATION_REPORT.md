@@ -134,6 +134,62 @@ Below is the verified record of the baseline responses:
   - Post 102 (`created_at: 1700000010`, active) $\rightarrow$ **Included (2nd)**
   - Post 101 (`created_at: 1700000000`, active) $\rightarrow$ **Excluded by `LIMIT 2`**
 
+## Phase 3: AI Code Generation (The JIRA Constraints)
+
+With the Golden Master baselines secured, we prompted the AI to generate the modernized V2 codebase in `src/main/java/com/social/modern/` strictly enforcing the 5 JIRA Architectural Guidelines.
+
+### 3.1 The AI Code Generation Prompt
+```text
+Migrate the Social Media V1 API to a modern Spring Boot V2 Architecture in package com.social.modern.
+You must adhere to these 5 architectural guidelines:
+
+1. Enforce Strict Separation of Concerns (N-Tier Architecture): The codebase must be refactored into distinct controller, service, repository, dto, and domain layers. Controllers must act strictly as HTTP routers with zero embedded business logic.
+2. Modernize the Persistence Layer: Fully deprecate raw JdbcTemplate queries and manual SQL mapping. Migrate all database interactions to Spring Data JDBC leveraging @Table entities and CrudRepository interfaces.
+3. Implement Strict Data Transfer Objects (DTOs): Eliminate the use of loosely typed Map<String, Object> and raw @RequestParam parsing. All ingress and egress API payloads must be strongly typed via Java DTO classes.
+4. Centralize Global Exception Handling: Remove manual ResponseEntity HTTP status returns from the business logic. The application must throw standard Java exceptions, which are intercepted and formatted globally by a @ControllerAdvice component.
+5. Maintain Absolute API Contract Integrity (Zero Regressions): While the endpoints will be versioned to /api/v2/..., the structural shape, data types, and status codes of the JSON responses must perfectly match the V1 baseline to ensure backward compatibility for existing mobile clients.
+```
+
 ---
 
-*Note: Phase 3 (AI Code Generation), Phase 4 (Red-Teaming & Refinements), and the Zero-Downtime Rollback Strategy will be documented in the subsequent sections as each milestone is completed.*
+### 3.2 Generated Architecture Layout
+
+The AI generated an N-tier structure across 6 specialized packages under `com.social.modern`:
+
+```
+src/main/java/com/social/modern/
+├── controller/
+│   ├── ProfileControllerV2.java       # Pure router for /api/v2/profile
+│   ├── SettingsControllerV2.java      # Pure router for /api/v2/settings
+│   └── FeedControllerV2.java          # Pure router for /api/v2/feed
+├── service/
+│   ├── ProfileService.java            # Profile business orchestration
+│   ├── SettingsService.java           # Settings validation & mutation
+│   └── FeedService.java               # Feed retrieval orchestration
+├── repository/
+│   ├── UserRepository.java            # Spring Data JDBC CrudRepository for users
+│   └── PostRepository.java            # Spring Data JDBC CrudRepository for posts
+├── dto/
+│   ├── ProfileResponseDto.java        # Strongly-typed user profile response
+│   ├── SettingsRequestDto.java        # Strongly-typed settings request DTO
+│   ├── SettingsResponseDto.java       # Strongly-typed settings response DTO
+│   ├── FeedPostDto.java               # Strongly-typed feed item DTO
+│   └── ErrorResponseDto.java          # Strongly-typed error envelope
+├── domain/
+│   ├── User.java                      # @Table("users") entity with @Id
+│   └── Post.java                      # @Table("posts") entity with @Id
+└── exception/
+    ├── UserNotFoundException.java     # Thrown when user is absent
+    ├── PrivateProfileException.java   # Thrown on unauthorized private profile access
+    ├── InvalidSettingException.java   # Thrown on invalid setting parameter
+    └── GlobalExceptionHandler.java    # Centralized @RestControllerAdvice
+```
+
+### 3.3 Initial Compilation Status
+* **Command:** `./gradlew compileJava`
+* **Result:** `BUILD SUCCESSFUL` (Zero compilation errors).
+* **Observation:** While the AI-generated code conforms structurally to modern Spring Boot best practices and compiles cleanly, deeper semantic analysis and empirical testing against the Golden Master baseline are required in Phase 4 to identify dropped business rules and hallucinations.
+
+---
+
+*Note: Phase 4 (Red-Teaming & Refinements) and the Zero-Downtime Rollback Strategy will be documented in the subsequent sections.*
